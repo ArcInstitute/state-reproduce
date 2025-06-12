@@ -1,0 +1,13 @@
+name: LowRankLinear
+checkpoint: null
+device: cuda
+
+kwargs:
+  gene_emb: gears_norman
+  pert_emb: tahoe_rdkit
+  ridge_lambda: 0.1
+  center_Y: true
+  seed: 2025
+  residual_decoder: false
+  nb_decoder: false
+  process_pert_names: null
