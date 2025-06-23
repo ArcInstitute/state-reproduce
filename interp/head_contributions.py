@@ -20,8 +20,7 @@ logger = logging.getLogger(__name__)
 
 project_root = Path(__file__).resolve().parent.parent  # adjust if needed
 sys.path.append(str(project_root))
-
-from models.pertsets import PertSetsPerturbationModel
+from baselines.state_sets_reproduce.models.pert_sets import PertSetsPerturbationModel
 
 MODEL_DIR = Path(
     # path to replogle st model

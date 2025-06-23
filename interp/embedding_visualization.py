@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 project_root = Path(__file__).resolve().parent.parent  # adjust if needed
 sys.path.append(str(project_root))
-sys.path.append(str(project_root / "vci_pretrain"))
 
 DATA_PATH = Path(
    # path to replogle processed.h5
