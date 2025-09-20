@@ -1,0 +1,41 @@
+# This is a template used in the application to generating the config file for
+# training tasks
+defaults:
+  - data: perturbation
+  - model: lr_linear
+  - training: default
+  - wandb: mohsen # Change this as needed
+  - _self_
+  
+
+# output_dir must be an absolute path (so that launch scripts are fully descriptive)
+name: debug
+output_dir: ./debugging
+use_wandb: true
+overwrite: false
+return_adatas: false
+pred_adata_path: null
+true_adata_path: null
+
+# don't save hydra output
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+  job_logging:
+    formatters:
+      simple:
+        format: "[%(levelname)s] %(message)s"  # Simple format for logging
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: simple
+        level: INFO
+        stream: ext://sys.stdout
+    root:
+      level: INFO
+    loggers:
+      __main__:
+        level: DEBUG
+        handlers: [console]
+        propagate: false

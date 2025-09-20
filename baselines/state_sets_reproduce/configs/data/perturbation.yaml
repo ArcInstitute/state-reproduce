@@ -1,0 +1,22 @@
+name: PerturbationDataModule
+kwargs:
+  toml_config_path: null
+  embed_key: X_hvg
+  output_space: gene
+  pert_rep: onehot
+  basal_rep: sample
+  num_workers: 8
+  pin_memory: true
+  n_basal_samples: 1
+  basal_mapping_strategy: random
+  should_yield_control_cells: true
+  batch_col: gem_group
+  pert_col: gene
+  cell_type_key: cell_type
+  control_pert: DMSO_TF
+  map_controls: true # for a control cell, should we use it as the target (learn identity) or sample a control?
+  perturbation_features_file: null
+  store_raw_basal: false
+  int_counts: false
+output_dir: null
+debug: true

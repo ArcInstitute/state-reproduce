@@ -1,2 +1,2 @@
-# state-sets-reproduce
-Reproduce analyses and baselines from the State-Sets paper
+# state-reproduce
+Reproduce analyses and baselines from the State paper

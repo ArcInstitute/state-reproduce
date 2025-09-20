@@ -1,0 +1,13 @@
+[datasets]
+tahoe = "/large_storage/ctc/userspace/aadduri/datasets/hvg/replogle_copy/"
+
+[training]
+tahoe = "train"
+
+[zeroshot]
+
+[fewshot]
+
+[fewshot."tahoe.RKO"]
+
+TEST_TASKS="[tahoe_45_ct:RKO:fewshot,tahoe_45_ct:SNU-423:fewshot,tahoe_45_ct:BT-474:fewshot,tahoe_45_ct:AN3 CA:fewshot,tahoe_45_ct:NCI-H661:fewshot]"

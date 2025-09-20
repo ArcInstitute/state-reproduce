@@ -1,0 +1,10 @@
+wandb_track: false
+batch_size: 8192
+lr: 3e-4
+max_steps: -1
+max_epochs: 1
+train_seed: 42
+val_freq: 100000
+test_freq: 100000
+ckpt_every_n_epochs: 1
+gradient_clip_val: 10 # 0 means no clipping
