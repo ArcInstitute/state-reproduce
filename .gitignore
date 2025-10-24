@@ -2,3 +2,5 @@
 *.log
 __pycache__/
 wandb/
+*/logs/
+*.csv
