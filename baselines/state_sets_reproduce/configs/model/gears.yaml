@@ -1,0 +1,16 @@
+name: gears
+checkpoint: null
+device: cuda
+
+kwargs:
+  hidden_dim: 64
+  num_go_gnn_layers: 3
+  num_gene_gnn_layers: 3
+  decoder_hidden_size: 32
+  uncertainty: false
+  num_similar_genes_go_graph: 20
+  uncertainty_reg: 1.0
+  direction_lambda: 0.15
+  coexpression_graph_path: /large_storage/ctc/userspace/mohsen/state_revisions/gears_prep/replogle_coexpression.csv
+  go_graph_url: https://dataverse.harvard.edu/api/access/datafile/6934319
+  pert_type: genetic
