@@ -3,7 +3,7 @@ checkpoint: null
 device: cuda
 
 kwargs:
-  gene_emb: gears_norman
+  gene_emb: scgpt
   pert_emb: tahoe_rdkit
   ridge_lambda: 0.1
   center_Y: true

@@ -5,6 +5,7 @@ import torch
 from torch.optim.lr_scheduler import StepLR
 
 from ..base import PerturbationModel
+
 # from models.decoders import DecoderInterface
 from ..utils import build_mlp
 from ..utils import get_activation_class
@@ -41,7 +42,7 @@ class SCVIPerturbationModel(PerturbationModel):
         n_perts: int,
         n_batches: int,
         output_space: str = "gene",
-        decoder = None,
+        decoder=None,
         lr=5e-4,
         wd=1e-6,
         n_steps_kl_warmup: int = None,
@@ -67,38 +68,41 @@ class SCVIPerturbationModel(PerturbationModel):
         self.n_cell_types = n_cell_types
         self.n_perts = n_perts
         self.n_batches = n_batches
-        
+
         self.n_layers_encoder = kwargs.get("n_layers_encoder", 2)
         self.n_layers_decoder = kwargs.get("n_layers_decoder", 2)
         self.n_hidden_encoder = kwargs.get("n_hidden_encoder", 256)
         self.n_hidden_decoder = kwargs.get("n_hidden_decoder", 256)
         self.n_latent = kwargs.get("n_latent", 64)
         self.recon_loss = kwargs.get("recon_loss", "nb")
-        
+
         self.use_batch_norm = kwargs.get("use_batch_norm", "both")
         self.use_layer_norm = kwargs.get("use_layer_norm", "none")
-        
-        self.pert_embeddings = None # will be set in _build_networks
-        
+
+        self.pert_embeddings = None  # will be set in _build_networks
+
         self.dropout_rate_encoder = kwargs.get("dropout_rate_encoder", 0.0)
         self.dropout_rate_decoder = kwargs.get("dropout_rate_decoder", 0.0)
         self.seed = kwargs.get("seed", 0)
-        
+
         # training params
         self.lr = lr
         self.wd = wd
         self.n_steps_kl_warmup = n_steps_kl_warmup
         self.n_epochs_kl_warmup = n_epochs_kl_warmup
-        
+
         self.step_size_lr = step_size_lr
         self.do_clip_grad = do_clip_grad
         self.gradient_clip_value = gradient_clip_value
         self.check_val_every_n_epoch = check_val_every_n_epoch
-        
+
         self.kwargs = kwargs
-        
-        assert self.output_space in ["gene", "all"], "scVI model only supports gene-level or all-level output"
-        
+
+        assert self.output_space in [
+            "gene",
+            "all",
+        ], "scVI model only supports gene-level or all-level output"
+
         # Build model components
         self._build_networks()
 
@@ -124,26 +128,29 @@ class SCVIPerturbationModel(PerturbationModel):
             dropout_rate_decoder=self.dropout_rate_decoder,
             seed=self.seed,
         )
-    
-    def _log_normalize_expression(self, X: torch.Tensor, target_sum: int = 1e4) -> torch.Tensor:
+
+    def _log_normalize_expression(
+        self, X: torch.Tensor, target_sum: int = 1e4
+    ) -> torch.Tensor:
         """
         Log-normalize expression data.
         """
-        if X.max() <= 25.0: # If it's log-tansformed
+        if X.max() <= 25.0:  # If it's log-tansformed
             X = torch.exp(X) - 1
-        
+
         counts_per_cell = X.sum(dim=1, keepdim=True)
-        counts_per_cell = torch.where(counts_per_cell > 0, counts_per_cell, torch.ones_like(counts_per_cell))
-        
+        counts_per_cell = torch.where(
+            counts_per_cell > 0, counts_per_cell, torch.ones_like(counts_per_cell)
+        )
+
         counts_per_cell = counts_per_cell / target_sum
-        
+
         X = torch.true_divide(X, counts_per_cell)
-        
+
         X = torch.log(X + 1)
-            
+
         return X
-            
-        
+
     def configure_optimizers(self):
         ae_params = (
             list(filter(lambda p: p.requires_grad, self.module.encoder.parameters()))
@@ -192,7 +199,9 @@ class SCVIPerturbationModel(PerturbationModel):
 
     def encode_basal_expression(self, expr: torch.Tensor) -> torch.Tensor:
         """Expression is already in embedding space, pass through."""
-        raise NotImplementedError("Basal expression encoding not supported for scVI model")
+        raise NotImplementedError(
+            "Basal expression encoding not supported for scVI model"
+        )
 
     def perturb(self, pert: torch.Tensor, basal: torch.Tensor) -> torch.Tensor:
         """
@@ -200,7 +209,7 @@ class SCVIPerturbationModel(PerturbationModel):
         """
         # Project perturbation and basal cell state to latent space
         raise NotImplementedError("Perturbation not supported for scVI model")
-    
+
     @property
     def kl_weight(self):
         slope = 1.0
@@ -222,26 +231,28 @@ class SCVIPerturbationModel(PerturbationModel):
                 return slope
         else:
             return slope
-        
-    def extract_batch_tensors(self, batch: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+
+    def extract_batch_tensors(
+        self, batch: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         x_pert = batch["pert_cell_emb"]
         x_basal = batch["ctrl_cell_emb"]
         pert = batch["pert_emb"]
         cell_type = batch["cell_type_onehot"]
         batch_ids = batch["batch"]
-        
+
         # if pert is one-hot, convert to index
         if pert.dim() == 2 and pert.size(1) == self.n_perts:
             pert = pert.argmax(1)
-        
+
         if cell_type.dim() == 2 and cell_type.size(1) == self.n_cell_types:
             cell_type = cell_type.argmax(1)
-        
+
         if batch_ids.dim() == 2 and batch_ids.size(1) == self.n_batches:
             batch_ids = batch_ids.argmax(1)
-            
+
         return x_pert, x_basal, pert, cell_type, batch_ids
-    
+
     def forward(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Given
@@ -254,33 +265,47 @@ class SCVIPerturbationModel(PerturbationModel):
                 - batch: Batch one-hot
         """
         x_pert, x_basal, pert, cell_type, batch_ids = self.extract_batch_tensors(batch)
-        
-        if x_basal.max() <= 25.0:
+
+        if (
+            x_basal.max() <= 25.0
+        ):  # If it's log-normalized, we need to convert it back to pseudo-counts for scvi
             x_basal = torch.exp(x_basal) - 1
-            
-        encoder_outputs, decoder_outputs = self.module.forward(x_basal, pert, cell_type, batch_ids)
-        
+
+        encoder_outputs, decoder_outputs = self.module.forward(
+            x_basal, pert, cell_type, batch_ids
+        )
+
         if self.recon_loss == "gauss":
             output_key = "loc"
         else:
             output_key = "mu"
 
         output = getattr(decoder_outputs["px"], output_key)
-        
+
         return output
-    
-    def training_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
+
+    def training_step(
+        self, batch: Dict[str, torch.Tensor], batch_idx: int
+    ) -> torch.Tensor:
         """Training step logic."""
         x_pert, x_basal, pert, cell_type, batch_ids = self.extract_batch_tensors(batch)
-            
-        encoder_outputs, decoder_outputs = self.module.forward(x_basal, pert, cell_type, batch_ids)
+
+        encoder_outputs, decoder_outputs = self.module.forward(
+            x_basal, pert, cell_type, batch_ids
+        )
+
+        if (
+            x_pert.max() <= 25.0
+        ):  # If it's log-normalized, we need to convert it back to pseudo-counts for scvi
+            x_pert = torch.exp(x_pert) - 1
+            x_basal = torch.exp(x_basal) - 1
 
         recon_loss, kl_loss = self.module.loss(
             x_pert=x_pert,
             encoder_outputs=encoder_outputs,
             decoder_outputs=decoder_outputs,
         )
-        
+
         loss = recon_loss + self.kl_weight * kl_loss
 
         r2_mean, r2_lfc = self.module.r2_metric(
@@ -289,13 +314,15 @@ class SCVIPerturbationModel(PerturbationModel):
             encoder_outputs=encoder_outputs,
             decoder_outputs=decoder_outputs,
         )
-        
-        self.log("KL_weight", 
-                 self.kl_weight, 
-                 on_epoch=True, 
-                 on_step=False, 
-                 prog_bar=True, 
-                 logger=True)
+
+        self.log(
+            "KL_weight",
+            self.kl_weight,
+            on_epoch=True,
+            on_step=False,
+            prog_bar=True,
+            logger=True,
+        )
 
         self.log(
             "recon_loss",
@@ -327,14 +354,22 @@ class SCVIPerturbationModel(PerturbationModel):
         if self.global_step % self.step_size_lr * 1000 == 0:
             sch = self.lr_schedulers()
             sch.step()
-        
+
         return loss
-        
+
     def validation_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> None:
         """Validation step logic."""
         x_pert, x_basal, pert, cell_type, batch_ids = self.extract_batch_tensors(batch)
-        
-        encoder_outputs, decoder_outputs = self.module.forward(x_basal, pert, cell_type, batch_ids)
+
+        if (
+            x_pert.max() <= 25.0
+        ):  # If it's log-normalized, we need to convert it back to pseudo-counts for scvi
+            x_pert = torch.exp(x_pert) - 1
+            x_basal = torch.exp(x_basal) - 1
+
+        encoder_outputs, decoder_outputs = self.module.forward(
+            x_basal, pert, cell_type, batch_ids
+        )
 
         recon_loss, kl_loss = self.module.loss(
             x_pert=x_pert,
@@ -352,7 +387,7 @@ class SCVIPerturbationModel(PerturbationModel):
         self.log("val_loss", recon_loss + self.kl_weight * kl_loss, prog_bar=True)
         self.log("val_r2_mean", r2_mean, prog_bar=True)
         self.log("val_r2_lfc", r2_lfc, prog_bar=True)
-        
+
         # is_control = "DMSO_TF" == batch["pert_name"][0] or "non-targeting" == batch["pert_name"][0]
         # if np.random.rand() < 0.1 or is_control:
         #     if self.recon_loss == "gauss":
@@ -361,33 +396,38 @@ class SCVIPerturbationModel(PerturbationModel):
         #         output_key = "mu"
 
         #     x_pred = getattr(decoder_outputs["px"], output_key)
-            
+
         #     self._update_val_cache(batch, x_pred)
-        
+
     def predict_step(self, batch, batch_idx, **kwargs):
         """
         Typically used for final inference. We'll replicate old logic:
          returning 'preds', 'X', 'pert_name', etc.
         """
         x_pert, x_basal, pert, cell_type, batch_ids = self.extract_batch_tensors(batch)
-        
-        encoder_outputs, decoder_outputs = self.module.forward(x_basal, pert, cell_type, batch_ids)
-        
+
+        encoder_outputs, decoder_outputs = self.module.forward(
+            x_basal, pert, cell_type, batch_ids
+        )
+
         if self.recon_loss == "gauss":
             output_key = "loc"
         else:
             output_key = "mu"
 
         x_pred = getattr(decoder_outputs["px"], output_key)
-        
+
         return {
             "preds": self._log_normalize_expression(x_pred, target_sum=1e4),
-            "X": self._log_normalize_expression(batch.get("pert_cell_emb", None), target_sum=1e4),
+            "X": self._log_normalize_expression(
+                batch.get("pert_cell_emb", None), target_sum=1e4
+            ),
+            "ctrl_cell_barcode": batch.get("ctrl_cell_barcode", None),
             "pert_name": batch.get("pert_name", None),
             "cell_type": batch.get("cell_type", None),
             "batch_name": batch.get("batch_name", None),
         }
-    
+
     def configure_optimizers(self):
         """Set up optimizer."""
         ae_params = (
@@ -430,4 +470,3 @@ class SCVIPerturbationModel(PerturbationModel):
             return optimizers, schedulers
         else:
             return optimizers
-    

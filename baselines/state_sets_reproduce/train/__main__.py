@@ -19,13 +19,14 @@ from lightning.pytorch.plugins.precision import MixedPrecision
 
 from cell_load.utils.modules import get_datamodule
 
-sys.path.append('/home/mohsen/projects/state-sets-reproduce/src/')
+sys.path.append("/home/mohsen/projects/state-sets-reproduce/src/")
 
 from state_sets_reproduce.models import (
     scGPTForPerturbationModel,
     CPAPerturbationModel,
     SCVIPerturbationModel,
     LowRankLinearModel,
+    GEARSPerturbationModel,
 )
 from state_sets_reproduce.callbacks import BatchSpeedMonitorCallback
 
@@ -35,14 +36,21 @@ import logging
 logger = logging.getLogger(__name__)
 torch.set_float32_matmul_precision("medium")
 
-def get_lightning_module(model_type: str, data_config: dict, model_config: dict, training_config: dict, var_dims: dict):
+
+def get_lightning_module(
+    model_type: str,
+    data_config: dict,
+    model_config: dict,
+    training_config: dict,
+    var_dims: dict,
+):
     """Create model instance based on config."""
     # combine the model config and training config
     module_config = {**model_config, **training_config}
     module_config["embed_key"] = data_config["embed_key"]
     module_config["output_space"] = data_config["output_space"]
     module_config["gene_names"] = var_dims["gene_names"]
-    
+
     print(f"Found {len(module_config['gene_names'])} genes in the data")
     module_config["batch_size"] = training_config["batch_size"]
 
@@ -78,17 +86,21 @@ def get_lightning_module(model_type: str, data_config: dict, model_config: dict,
             batch_dim=var_dims["batch_dim"],
             **module_config,
         )
-    elif model_type.lower() == "scgpt-chemical" or model_type.lower() == "scgpt-genetic":
+    elif (
+        model_type.lower() == "scgpt-chemical" or model_type.lower() == "scgpt-genetic"
+    ):
         pretrained_path = module_config["pretrained_path"]
         assert pretrained_path is not None, "pretrained_path must be provided for scGPT"
-        
+
         model_dir = Path(pretrained_path)
         model_config_file = model_dir / "args.json"
         model_file = model_dir / "best_model.pt"
-        
+
         model = scGPTForPerturbationModel(
             ntoken=module_config["ntoken"],
-            n_drug_tokens=module_config["n_perts"], # only used for chemical perturbations
+            n_drug_tokens=module_config[
+                "n_perts"
+            ],  # only used for chemical perturbations
             vocab=module_config["vocab"],
             gene_names=var_dims["gene_names"],
             d_model=module_config["d_model"],
@@ -111,21 +123,27 @@ def get_lightning_module(model_type: str, data_config: dict, model_config: dict,
             embed_key=module_config["embed_key"],
             perturbation_type=module_config["perturbation_type"],
             pert_names=var_dims["pert_names"],
+            control_pert=module_config["control_pert"],
         )
-        
+
         load_param_prefixes = module_config["load_param_prefixes"]
-        
+
         if load_param_prefixes is not None:
             model_dict = model.model.state_dict()
             pretrained_dict = torch.load(model_file)
             pretrained_dict = {
                 k: v
                 for k, v in pretrained_dict.items()
-                if any([k.startswith(prefix) for prefix in module_config["load_param_prefixes"]])
+                if any(
+                    [
+                        k.startswith(prefix)
+                        for prefix in module_config["load_param_prefixes"]
+                    ]
+                )
             }
             for k, v in pretrained_dict.items():
                 print(f"Loading params {k} with shape {v.shape}")
-                
+
             model_dict.update(pretrained_dict)
             model.model.load_state_dict(model_dict)
         else:
@@ -143,37 +161,48 @@ def get_lightning_module(model_type: str, data_config: dict, model_config: dict,
                 }
                 for k, v in pretrained_dict.items():
                     print(f"Loading params {k} with shape {v.shape}")
-                    
+
                 model_dict.update(pretrained_dict)
                 model.model.load_state_dict(model_dict)
-        
+
         return model
+    elif model_type.lower() == "gears":
+        return GEARSPerturbationModel(
+            input_dim=var_dims["input_dim"],
+            output_dim=var_dims["output_dim"],
+            pert_dim=var_dims["pert_dim"],
+            gene_dim=gene_dim,
+            pert_names=var_dims["pert_names"],
+            **module_config,
+        )
     else:
         raise ValueError(f"Unknown model type: {model_type}")
+
 
 def get_latest_step_checkpoint(directory):
     # Get all checkpoint files
     files = os.listdir(directory)
-    
+
     # Extract step numbers using regex, excluding files with 'val_loss'
     step_numbers = []
     for f in files:
-        if f.startswith('step=') and 'val_loss' not in f:
+        if f.startswith("step=") and "val_loss" not in f:
             # Extract the number between 'step=' and '.ckpt'
-            match = re.search(r'step=(\d+)(?:-v\d+)?\.ckpt', f)
+            match = re.search(r"step=(\d+)(?:-v\d+)?\.ckpt", f)
             if match:
                 step_numbers.append(int(match.group(1)))
-    
+
     if not step_numbers:
         raise ValueError("No checkpoint files found")
-        
+
     # Get the maximum step number
     max_step = max(step_numbers)
-    
+
     # Construct the checkpoint path
     checkpoint_path = join(directory, f"step={max_step}.ckpt")
-    
+
     return checkpoint_path
+
 
 def get_loggers(
     output_dir: str,
@@ -205,7 +234,9 @@ def get_loggers(
     return loggers
 
 
-def get_checkpoint_callbacks(output_dir: str, name: str, val_freq: int, ckpt_every_n_steps: int) -> List[ModelCheckpoint]:
+def get_checkpoint_callbacks(
+    output_dir: str, name: str, val_freq: int, ckpt_every_n_steps: int
+) -> List[ModelCheckpoint]:
     """Create checkpoint callbacks based on validation frequency."""
     checkpoint_dir = join(output_dir, name, "checkpoints")
     callbacks = []
@@ -214,7 +245,7 @@ def get_checkpoint_callbacks(output_dir: str, name: str, val_freq: int, ckpt_eve
     best_ckpt = ModelCheckpoint(
         dirpath=checkpoint_dir,
         filename="step={step}-val_loss={val_loss:.4f}",
-        save_last='link',  # Will create last.ckpt symlink to best checkpoint
+        save_last="link",  # Will create last.ckpt symlink to best checkpoint
         monitor="val_loss",
         mode="min",
         save_top_k=1,  # Only keep the best checkpoint
@@ -254,37 +285,47 @@ def train(cfg: DictConfig) -> None:
     if cfg["use_wandb"]:
         os.makedirs(cfg["wandb"]["local_wandb_dir"], exist_ok=True)
 
-    with open(join(run_output_dir, "config.yaml"), "w") as f:
-        f.write(cfg_yaml)
-
     # Set random seeds
     if "train_seed" in cfg["training"]:
         pl.seed_everything(cfg["training"]["train_seed"])
-        
+
     # if the provided pert_col is drugname_drugconc, hard code the value of control pert
     # this is because it's surprisingly hard to specify a list of tuples in the config as a string
-    cfg["model"]["kwargs"]["control_pert"] = cfg["data"]["kwargs"]["control_pert"]
     if cfg["data"]["kwargs"]["pert_col"] == "drugname_drugconc":
         cfg["data"]["kwargs"]["control_pert"] = "[('DMSO_TF', 0.0, 'uM')]"
+
+    cfg["model"]["kwargs"]["control_pert"] = cfg["data"]["kwargs"]["control_pert"]
 
     # Initialize data module. this is backwards compatible with previous configs
     try:
         sentence_len = cfg["model"]["cell_set_len"]
     except KeyError:
-        if cfg["model"]["name"].lower() in ["cpa", "scvi", "lowranklinear"] or cfg["model"]["name"].lower().startswith("scgpt"):
-            if "cell_sentence_len" in cfg["model"]["kwargs"] and cfg["model"]["kwargs"]["cell_sentence_len"] > 1:
+        if cfg["model"]["name"].lower() in [
+            "cpa",
+            "gears",
+            "scvi",
+            "lowranklinear",
+        ] or cfg["model"]["name"].lower().startswith("scgpt"):
+            if (
+                "cell_sentence_len" in cfg["model"]["kwargs"]
+                and cfg["model"]["kwargs"]["cell_sentence_len"] > 1
+            ):
                 sentence_len = cfg["model"]["kwargs"]["cell_sentence_len"]
                 cfg["training"]["batch_size"] = 1
             else:
                 sentence_len = 1
         else:
-            sentence_len = cfg["model"]["kwargs"]["transformer_backbone_kwargs"]["n_positions"]
-            
-    if cfg["model"]["name"].lower().startswith("scgpt"): # scGPT uses log-normalized expression
+            sentence_len = cfg["model"]["kwargs"]["transformer_backbone_kwargs"][
+                "n_positions"
+            ]
+
+    if (
+        cfg["model"]["name"].lower().startswith("scgpt")
+    ):  # scGPT uses log-normalized expression
         # cfg["data"]["kwargs"]["hvg_names_uns_key"] = "hvg_names" if cfg["data"]["kwargs"]["train_task"] != "replogle" else None # TODO: better to not hardcode this
-        
+
         model_dir = Path(cfg["model"]["kwargs"]["pretrained_path"])
-        
+
         vocab_file = model_dir / "vocab.json"
 
         vocab = json.load(open(vocab_file, "r"))
@@ -292,13 +333,13 @@ def train(cfg: DictConfig) -> None:
         for s in cfg["model"]["kwargs"]["special_tokens"]:
             if s not in vocab:
                 vocab[s] = len(vocab)
-        
+
         cfg["model"]["kwargs"]["vocab"] = vocab
         cfg["model"]["kwargs"]["ntoken"] = len(vocab)
         cfg["model"]["kwargs"]["d_model"] = cfg["model"]["kwargs"]["embsize"]
-        
+
         logger.info(f"Added vocab and hvg_names_uns_key to data kwargs for scGPT")
-        
+
     dm = get_datamodule(
         name=cfg["data"]["name"],
         kwargs=cfg["data"]["kwargs"],
@@ -308,32 +349,102 @@ def train(cfg: DictConfig) -> None:
 
     dm.setup()
 
-    if cfg["model"]["name"].lower() in ["cpa", "scvi", "lowranklinear"] or cfg["model"]["name"].lower().startswith("scgpt"):
+    if cfg["model"]["name"].lower() in ["cpa", "scvi", "lowranklinear", "gears"] or cfg[
+        "model"
+    ]["name"].lower().startswith("scgpt"):
         cfg["model"]["kwargs"]["n_cell_types"] = len(dm.cell_type_onehot_map)
         cfg["model"]["kwargs"]["n_perts"] = len(dm.pert_onehot_map)
         cfg["model"]["kwargs"]["n_batches"] = len(dm.batch_onehot_map)
-        
+
+    if (
+        cfg["model"]["name"].lower() == "gears"
+        and cfg["data"]["kwargs"]["pert_col"].lower() == "cytokine"
+    ):
+        logger.info("Using parse coexpression graph for GEARS")
+        cfg["model"]["kwargs"][
+            "coexpression_graph_path"
+        ] = "/large_storage/ctc/userspace/mohsen/state_revisions/gears_prep/parse_coexpression.csv"
+    elif (
+        cfg["model"]["name"].lower() == "gears"
+        and cfg["data"]["kwargs"]["pert_col"].lower() == "drugname_drugconc"
+    ):
+        logger.info("Using tahoe coexpression graph for GEARS")
+        cfg["model"]["kwargs"][
+            "coexpression_graph_path"
+        ] = "/large_storage/ctc/userspace/mohsen/state_revisions/gears_prep/tahoe_coexpression.csv"
+
     if cfg["model"]["name"].lower() == "lowranklinear":
-        if cfg["model"]["kwargs"]["pert_emb"] == "identity": # Use the identity matrix as the perturbation embeddings (one-hot encoding)
+        if (
+            cfg["model"]["kwargs"]["pert_emb"] == "identity"
+        ):  # Use the identity matrix as the perturbation embeddings (one-hot encoding)
             cfg["model"]["kwargs"]["pert_emb_path"] = "identity"
-        elif cfg["model"]["kwargs"]["pert_emb"] == "scgpt": # scGPT: Genetic perturbation data
-            cfg["model"]["kwargs"]["pert_emb_path"] = f"/large_storage/goodarzilab/userspace/mohsen/VCI-models/scGPT/scGPT_human/gene_embeddings.h5"
-        elif cfg["model"]["kwargs"]["pert_emb"] == "tahoe_rdkit": # Tahoe: Chemical perturbation data
-            cfg["model"]["kwargs"]["pert_emb_path"] = "/large_storage/goodarzilab/userspace/mohsen/VCI/tahoe/tahoe_rdkit_embs.h5"
-        elif cfg["model"]["kwargs"]["pert_emb"] == "gears_norman": # Extract GEARS perturbation embeddings from the trained GEARS on Norman2019 dataset
-            cfg["model"]["kwargs"]["pert_emb_path"] = "/large_storage/goodarzilab/userspace/mohsen/VCI-models/GEARS/gears_norman.h5"
+        elif (
+            cfg["model"]["kwargs"]["pert_emb"] == "scgpt"
+        ):  # scGPT: Genetic perturbation data
+            cfg["model"]["kwargs"][
+                "pert_emb_path"
+            ] = f"/large_storage/goodarzilab/userspace/mohsen/VCI-models/scGPT/scGPT_human/gene_embeddings.h5"
+        elif (
+            cfg["model"]["kwargs"]["pert_emb"] == "tahoe_rdkit"
+        ):  # Tahoe: Chemical perturbation data
+            cfg["model"]["kwargs"][
+                "pert_emb_path"
+            ] = "/large_storage/goodarzilab/userspace/mohsen/VCI/tahoe/tahoe_rdkit_embs.h5"
+        elif (
+            cfg["model"]["kwargs"]["pert_emb"] == "gears_norman"
+        ):  # Extract GEARS perturbation embeddings from the trained GEARS on Norman2019 dataset
+            cfg["model"]["kwargs"][
+                "pert_emb_path"
+            ] = "/large_storage/goodarzilab/userspace/mohsen/VCI-models/GEARS/gears_norman.h5"
         else:
-            raise ValueError(f"Unknown perturbation embedding: {cfg['model']['kwargs']['pert_emb']}")
-        
-        if cfg["model"]["kwargs"]["gene_emb"] == "training_data": # Use the training data as the gene embeddings
+            raise ValueError(
+                f"Unknown perturbation embedding: {cfg['model']['kwargs']['pert_emb']}"
+            )
+
+        if (
+            cfg["model"]["kwargs"]["gene_emb"] == "training_data"
+        ):  # Use the training data as the gene embeddings
             # 1. Perform PCA on the training data
             raise NotImplementedError("PCA on training data is not implemented yet")
-        elif cfg["model"]["kwargs"]["gene_emb"] == "gears_norman": # Extract GEARS gene embeddings from the trained GEARS on Norman2019 dataset
-            cfg["model"]["kwargs"]["gene_emb_path"] = "/large_storage/goodarzilab/userspace/mohsen/VCI-models/GEARS/gears_norman.h5"
-        elif cfg["model"]["kwargs"]["gene_emb"] == "scgpt": # Extract scGPT's vocabulary embeddings 
-            cfg["model"]["kwargs"]["gene_emb_path"] = f"/large_storage/goodarzilab/userspace/mohsen/VCI-models/scGPT/scGPT_human/gene_embeddings.h5"
+        elif (
+            cfg["model"]["kwargs"]["gene_emb"] == "gears_norman"
+        ):  # Extract GEARS gene embeddings from the trained GEARS on Norman2019 dataset
+            cfg["model"]["kwargs"][
+                "gene_emb_path"
+            ] = "/large_storage/goodarzilab/userspace/mohsen/VCI-models/GEARS/gears_norman.h5"
+        elif (
+            cfg["model"]["kwargs"]["gene_emb"] == "scgpt"
+        ):  # Extract scGPT's vocabulary embeddings
+            cfg["model"]["kwargs"][
+                "gene_emb_path"
+            ] = f"/large_storage/goodarzilab/userspace/mohsen/VCI-models/scGPT/scGPT_human/gene_embeddings.h5"
         else:
             raise ValueError(f"Unknown gene embedding: {cfg['model']['gene_emb']}")
+
+    with open(join(run_output_dir, "config.yaml"), "w") as f:
+        # f.write()
+        new_cfg_yaml = OmegaConf.to_yaml(cfg, resolve=True)
+        f.write(new_cfg_yaml)
+
+    dm_var_dims = dm.get_var_dims()
+
+    # if cfg["model"]["name"].lower() == "gears":
+    if cfg["data"]["kwargs"]["pert_col"].lower() == "drugname_drugconc":
+        logger.info("Using tahoe gene names for the baselines ")
+        path = "/large_storage/ctc/userspace/mohsen/state_revisions/gears_prep/tahoe_gene_names.txt"
+        with open(path, "r") as f:
+            gene_names = f.readlines()
+        gene_names = [gene.strip() for gene in gene_names]
+        dm_var_dims["gene_names"] = gene_names
+        dm_var_dims["gene_dim"] = len(gene_names)
+    elif cfg["data"]["kwargs"]["pert_col"].lower() == "cytokine":
+        logger.info("Using parse gene names for the baselines ")
+        path = "/large_storage/ctc/userspace/mohsen/state_revisions/gears_prep/parse_hvg_names.txt"
+        with open(path, "r") as f:
+            gene_names = f.readlines()
+        gene_names = [gene.strip() for gene in gene_names]
+        dm_var_dims["gene_names"] = gene_names
+        dm_var_dims["gene_dim"] = len(gene_names)
 
     # Create model
     model = get_lightning_module(
@@ -341,7 +452,7 @@ def train(cfg: DictConfig) -> None:
         cfg["data"]["kwargs"],
         cfg["model"]["kwargs"],
         cfg["training"],
-        dm.get_var_dims(),
+        dm_var_dims,
     )
 
     # Set up logging
@@ -375,8 +486,8 @@ def train(cfg: DictConfig) -> None:
     batch_speed_monitor = BatchSpeedMonitorCallback()
     callbacks = ckpt_callbacks + [batch_speed_monitor]
 
-    logger.info('Loggers and callbacks set up.')
-    
+    logger.info("Loggers and callbacks set up.")
+
     if cfg["model"]["name"].lower().startswith("scgpt"):
         plugins = [
             MixedPrecision(
@@ -397,7 +508,7 @@ def train(cfg: DictConfig) -> None:
         accelerator=accelerator,
         devices=1,
         max_steps=cfg["training"].get("max_steps", -1),  # for normal models
-        max_epochs=cfg["training"].get("max_epochs", -1), 
+        max_epochs=cfg["training"].get("max_epochs", -1),
         check_val_every_n_epoch=None,
         val_check_interval=cfg["training"]["val_freq"],
         logger=loggers,
@@ -405,12 +516,15 @@ def train(cfg: DictConfig) -> None:
         callbacks=callbacks,
         gradient_clip_val=cfg["training"].get("gradient_clip_val", None),
     )
-    
-    if cfg['model']['name'].lower() == 'cpa':
-        trainer_kwargs['gradient_clip_val'] = 0
+
+    if cfg["model"]["name"].lower() == "cpa":
+        trainer_kwargs["gradient_clip_val"] = 0
 
     # If it's SimpleSum, override to do exactly 1 epoch, ignoring `max_steps`.
-    if cfg["model"]["name"].lower() == "celltypemean" or cfg["model"]["name"].lower() == "globalsimplesum":
+    if (
+        cfg["model"]["name"].lower() == "celltypemean"
+        or cfg["model"]["name"].lower() == "globalsimplesum"
+    ):
         trainer_kwargs["max_epochs"] = 1  # do exactly one epoch
         # delete max_steps to avoid conflicts
         del trainer_kwargs["max_steps"]
@@ -425,7 +539,7 @@ def train(cfg: DictConfig) -> None:
     else:
         logging.info(f"!! Resuming training from {checkpoint_path} !!")
 
-    logger.info('Starting trainer fit.')
+    logger.info("Starting trainer fit.")
 
     # Train
     trainer.fit(
@@ -438,10 +552,11 @@ def train(cfg: DictConfig) -> None:
     checkpoint_path = join(ckpt_callbacks[0].dirpath, "final.ckpt")
     if not exists(checkpoint_path):
         trainer.save_checkpoint(checkpoint_path)
-        
+
     # save the data_module
     with open(join(run_output_dir, "data_module.pkl"), "wb") as f:
         pickle.dump(dm, f)
+
 
 if __name__ == "__main__":
     train()

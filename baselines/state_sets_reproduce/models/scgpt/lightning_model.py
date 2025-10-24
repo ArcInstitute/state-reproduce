@@ -56,7 +56,7 @@ class scGPTForPerturbationModel(PerturbationModel):
             pert_dim=None,
             dropout=dropout,
             lr=lr,
-            loss_fn='mse',
+            loss_fn="mse",
             embed_key=embed_key,
             output_space="gene",
             decoder=None,
@@ -85,10 +85,10 @@ class scGPTForPerturbationModel(PerturbationModel):
         self.fast_transformer_backend = fast_transformer_backend
         self.pre_norm = pre_norm
         self.perturbation_type = perturbation_type.lower()
-        
+
         for k, v in kwargs.items():
             print(f"WARNING: scGPTForPerturbation Model unused kwarg: {k}")
-            
+
         self.lr = lr
         self.step_size_lr = step_size_lr
         self.include_zero_gene = include_zero_gene
@@ -97,53 +97,67 @@ class scGPTForPerturbationModel(PerturbationModel):
         self.do_CCE = do_CCE
         self.do_MVC = do_MVC
         self.do_ECS = do_ECS
-        
-        assert self.perturbation_type in ["chemical", "genetic"], "perturbation_type must be either 'chemical' or 'genetic'"
-        
+
+        assert self.perturbation_type in [
+            "chemical",
+            "genetic",
+        ], "perturbation_type must be either 'chemical' or 'genetic'"
+
         if self.perturbation_type == "chemical":
-            assert self.n_drug_tokens > 0, "n_drug_tokens must be greater than 0 for chemical perturbation"
-            
+            assert (
+                self.n_drug_tokens > 0
+            ), "n_drug_tokens must be greater than 0 for chemical perturbation"
+
         self.vocab = vocab
         self.gene_ids = torch.tensor(
             [
                 vocab[gene] if gene in vocab else vocab["<pad>"]
-                for gene in self.gene_names 
+                for gene in self.gene_names
             ],
             dtype=int,
-        )
-        
+        )[torch.randperm(len(self.gene_names))[:2000]]
+
         num_invalid_genes = torch.sum(self.gene_ids == vocab["<pad>"])
         if num_invalid_genes > 0:
-            print(f"scGPTForPerturbationModel: Found {num_invalid_genes} invalid genes in vocab")
-            
+            print(
+                f"scGPTForPerturbationModel: Found {num_invalid_genes} invalid genes in vocab (len = {len(self.gene_names)})"
+            )
+
         if self.perturbation_type == "genetic":
             num_genes_X = len(self.gene_names)
             self.pert_flags = {}
-            
+
             pert_names = kwargs.get("pert_names", [])
+            control_pert = kwargs.get(
+                "control_pert",
+            )
             num_invalid_perts = 0
             for pert in pert_names:
                 self.pert_flags[pert] = torch.zeros(num_genes_X)
                 if pert in self.gene_names:
                     self.pert_flags[pert][self.gene_names.index(pert)] = 1
                 else:
-                    num_invalid_perts += 1
-                
+                    if pert != control_pert:
+                        num_invalid_perts += 1
+
             if num_invalid_perts > 0:
-                print(f"scGPTForPerturbationModel: Found {num_invalid_perts} invalid perturbations in pert_names")
-            
-            pert_flag_embs = torch.stack([
-                self.pert_flags[pert] for pert in pert_names
-            ])
-            
-            self.pert_flag_emb = nn.Embedding.from_pretrained(pert_flag_embs, freeze=True)
+                print(
+                    f"scGPTForPerturbationModel: Found {num_invalid_perts} invalid perturbations in pert_names"
+                )
+
+            pert_flag_embs = torch.stack([self.pert_flags[pert] for pert in pert_names])
+
+            self.pert_flag_emb = nn.Embedding.from_pretrained(
+                pert_flag_embs, freeze=True
+            )
+            self.control_pert_idx = pert_names.index(control_pert)
 
         self.save_hyperparameters()
 
         self.validation_outputs = []
-        
+
         self._build_networks()
-        
+
     def _build_networks(self):
         generator_params = dict(
             ntoken=self.ntoken,
@@ -173,9 +187,7 @@ class scGPTForPerturbationModel(PerturbationModel):
                 **generator_params,
             )
         elif self.perturbation_type == "genetic":
-            self.model = TransformerGenerator(
-                **generator_params
-            )
+            self.model = TransformerGenerator(**generator_params)
 
     def encode_perturbation(self, pert: torch.Tensor) -> torch.Tensor:
         """Map perturbation to an effect vector in embedding space."""
@@ -183,7 +195,9 @@ class scGPTForPerturbationModel(PerturbationModel):
 
     def encode_basal_expression(self, expr: torch.Tensor) -> torch.Tensor:
         """Expression is already in embedding space, pass through."""
-        raise NotImplementedError("Basal expression encoding not supported for scGPT model")
+        raise NotImplementedError(
+            "Basal expression encoding not supported for scGPT model"
+        )
 
     def perturb(self, pert: torch.Tensor, basal: torch.Tensor) -> torch.Tensor:
         """
@@ -191,33 +205,45 @@ class scGPTForPerturbationModel(PerturbationModel):
         """
         # Project perturbation and basal cell state to latent space
         raise NotImplementedError("Perturb function not supported for scGPT model")
-    
-    def _log_normalize_expression(self, X: torch.Tensor, target_sum: int = 10000) -> torch.Tensor:
+
+    def _log_normalize_expression(
+        self, X: torch.Tensor, target_sum: int = 10000
+    ) -> torch.Tensor:
         """
         Normalize expression to have a desired sum.
         """
         counts_per_cell = X.sum(dim=1, keepdim=True)
-        safe_counts = torch.where(counts_per_cell > 0, counts_per_cell, torch.ones_like(counts_per_cell))
+        safe_counts = torch.where(
+            counts_per_cell > 0, counts_per_cell, torch.ones_like(counts_per_cell)
+        )
         safe_counts = safe_counts / target_sum
-        
+
         X = torch.true_divide(X, safe_counts)
         X = torch.log1p(X)
-        
+
         return X
 
     def preprocess_batch(self, batch):
         X_pert = batch["pert_cell_emb"]
         X_ctrl = batch["ctrl_cell_emb"]
-        
-        if X_pert.max() > 150: # Raw counts
-            batch["pert_cell_emb"] = self._log_normalize_expression(X_pert, target_sum=1e4)
-            batch["ctrl_cell_emb"] = self._log_normalize_expression(X_ctrl, target_sum=1e4)
+
+        if X_pert.max() > 25:  # Raw counts
+            batch["pert_cell_emb"] = self._log_normalize_expression(
+                X_pert, target_sum=1e4
+            )
+            batch["ctrl_cell_emb"] = self._log_normalize_expression(
+                X_ctrl, target_sum=1e4
+            )
         else:
-            batch["pert_cell_emb"] = self._log_normalize_expression(torch.expm1(X_pert), target_sum=1e4)
-            batch["ctrl_cell_emb"] = self._log_normalize_expression(torch.expm1(X_ctrl), target_sum=1e4)
-        
+            batch["pert_cell_emb"] = self._log_normalize_expression(
+                torch.expm1(X_pert), target_sum=1e4
+            )
+            batch["ctrl_cell_emb"] = self._log_normalize_expression(
+                torch.expm1(X_ctrl), target_sum=1e4
+            )
+
         return batch
-    
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         scheduler = torch.optim.lr_scheduler.StepLR(
@@ -231,27 +257,33 @@ class scGPTForPerturbationModel(PerturbationModel):
         truncate=True,
     ):
         batch = self.preprocess_batch(batch)
-        
+
         x_ctrl = batch["ctrl_cell_emb"]  # (batch_size, n_genes)
         x_pert = batch["pert_cell_emb"]  # (batch_size, n_genes)
         pert_ids = batch["pert_emb"].argmax(dim=1)
-        
+
         if self.perturbation_type == "chemical":
-            pert_flags = torch.zeros_like(x_pert, dtype=torch.long) # no genes are perturbed
+            pert_flags = torch.zeros_like(
+                x_pert, dtype=torch.long
+            )  # no genes are perturbed
+            cell_mask = torch.ones_like(pert_ids, dtype=torch.bool)
         else:
             pert_flags = self.pert_flag_emb(pert_ids)
-            
+            cell_mask = (pert_flags.sum(dim=1) > 0) | (
+                pert_ids == self.control_pert_idx
+            )
+
         gene_ids = self.gene_ids.to(x_ctrl.device)
-        
+
         nonpad_genes_mask = gene_ids != self.pad_token_id
-        
+
         x_ctrl = x_ctrl[:, nonpad_genes_mask]
         x_pert = x_pert[:, nonpad_genes_mask]
         gene_ids = gene_ids[nonpad_genes_mask]
         pert_flags = pert_flags[:, nonpad_genes_mask]
-        
+
         batch_size, n_genes = x_ctrl.size()
-        
+
         if self.include_zero_gene == "all":
             input_gene_ids = torch.arange(
                 n_genes, device=x_ctrl.device, dtype=torch.long
@@ -281,7 +313,7 @@ class scGPTForPerturbationModel(PerturbationModel):
         # src_key_padding_mask = torch.zeros_like(
         #     x_basal, dtype=torch.bool, device=x_basal.device
         # )
-        
+
         if self.perturbation_type == "genetic":
             pert_ids = None
 
@@ -299,7 +331,9 @@ class scGPTForPerturbationModel(PerturbationModel):
         output_values = output_dict["mlm_output"]  # batch_size, max_seq_len
 
         masked_positions = torch.ones_like(x_ctrl, dtype=torch.bool)  # Use all genes
-        loss = loss_mse = masked_mse_loss(output_values, x_pert, masked_positions)
+        loss = loss_mse = masked_mse_loss(
+            output_values[cell_mask], x_pert[cell_mask], masked_positions[cell_mask]
+        )
 
         output_dict["x_pred"] = output_dict["mlm_output"].float()
         output_dict["x_true"] = x_pert
@@ -375,24 +409,58 @@ class scGPTForPerturbationModel(PerturbationModel):
     # def validation_epoch_end(self, outputs):
     #     pass
 
-    @torch.no_grad()
-    def predict(self, batch):
-        loss, batch_outputs = self.shared_step(batch, truncate=False)
-
-        x_pred = batch_outputs["x_pred"]
-        return x_pred
-    
     def predict_step(self, batch, batch_idx, **kwargs):
         """
         Typically used for final inference. We'll replicate old logic:
          returning 'pred', 'X', 'pert_name', etc.
         """
         loss, batch_outputs = self.shared_step(batch, truncate=False)
-        
+
+        batch = self.preprocess_batch(batch)
+
+        gene_mask = self.gene_ids != self.pad_token_id
+
+        if self.perturbation_type == "genetic":
+            pert_ids = batch["pert_emb"].argmax(dim=1)
+            cell_mask = (self.pert_flag_emb(pert_ids).sum(dim=1) > 0) | (
+                pert_ids == self.control_pert_idx
+            )
+        else:
+            cell_mask = torch.ones_like(
+                batch["pert_emb"].argmax(dim=1), dtype=torch.bool
+            )
+
+        preds = batch_outputs["x_pred"].float()[cell_mask]
+        X = batch["pert_cell_emb"].float()[cell_mask]
+
+        pert_names = batch.get("pert_name", None)
+        if isinstance(pert_names, torch.Tensor):
+            pert_names = pert_names.cpu().numpy()[cell_mask]
+        elif isinstance(pert_names, list):
+            pert_names = [p for i, p in enumerate(pert_names) if cell_mask[i]]
+        else:
+            pert_names = None
+
+        cell_types = batch.get("cell_type", None)
+        if isinstance(cell_types, torch.Tensor):
+            cell_types = cell_types.cpu().numpy()[cell_mask]
+        elif isinstance(cell_types, list):
+            cell_types = [c for i, c in enumerate(cell_types) if cell_mask[i]]
+        else:
+            cell_types = None
+
+        batch_names = batch.get("batch_name", None)
+        if isinstance(batch_names, torch.Tensor):
+            batch_names = batch_names.cpu().numpy()[cell_mask]
+        elif isinstance(batch_names, list):
+            batch_names = [b for i, b in enumerate(batch_names) if cell_mask[i]]
+        else:
+            batch_names = None
+
         return {
-            "preds": batch_outputs["x_pred"].float(),
-            "X": batch_outputs["pert_cell_emb"].float(),
-            "pert_name": batch.get("pert_name", None),
-            'cell_type': batch.get("cell_type", None),
-            'batch_name': batch.get("batch_name", None),
+            "preds": preds,
+            "X": X[:, gene_mask],
+            "pert_name": pert_names,
+            "cell_type": cell_types,
+            "batch_name": batch_names,
         }

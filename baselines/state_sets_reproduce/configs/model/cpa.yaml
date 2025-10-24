@@ -3,12 +3,12 @@ checkpoint: null
 device: cuda
 
 kwargs:
-  n_latent: 64
+  n_latent: 84
   recon_loss: gauss
   pert_embeddings: null
   hidden_dim: 256 # not used
   n_hidden_encoder: 768
-  n_layers_encoder: 4
+  n_layers_encoder: 3
   n_hidden_decoder: 768
   n_layers_decoder: 3
   use_batch_norm: decoder

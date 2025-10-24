@@ -17,6 +17,6 @@ kwargs:
   dropout_rate_decoder: 0.1
   expr_transform: none
   seed: 2025
-  cell_sentence_len: 512
+  cell_sentence_len: 1
   residual_decoder: false
   nb_decoder: false

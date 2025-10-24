@@ -9,3 +9,4 @@ from .cpa import CPAPerturbationModel
 from .scvi import SCVIPerturbationModel
 from .scgpt import scGPTForPerturbationModel
 from .low_rank_linear import LowRankLinearModel
+from .gears import GEARSPerturbationModel

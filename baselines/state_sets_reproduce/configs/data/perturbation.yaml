@@ -18,5 +18,6 @@ kwargs:
   perturbation_features_file: null
   store_raw_basal: false
   int_counts: false
+  barcode: true
 output_dir: null
 debug: true

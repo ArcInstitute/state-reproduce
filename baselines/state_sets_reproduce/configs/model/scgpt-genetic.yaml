@@ -42,6 +42,6 @@ kwargs:
   expr_transform: none
   perturbation_type: genetic
   seed: 2025
-  cell_sentence_len: 2048
+  cell_sentence_len: 1
   residual_decoder: false
   nb_decoder: false

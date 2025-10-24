@@ -9,10 +9,12 @@ This project implements and evaluates several baseline models for perturbation m
 - CPA (Compositional Perturbation Autoencoder)
 - scGPT
 - scVI
+- GEARS
 
 The models are evaluated on two major datasets:
 - Replogle dataset (with 4-fold cross-validation)
 - Tahoe dataset
+- Parse dataset
 
 ## Installation
 
@@ -79,3 +81,21 @@ For tahoe, the `<fold_id>` is not needed.
 | CPA | Tahoe | `sh scripts/train.sh cpa tahoe` |
 | scGPT | Tahoe | `sh scripts/train.sh scgpt tahoe` |
 | scVI | Tahoe | `sh scripts/train.sh scvi tahoe` |
+
+
+### Generating Predictions
+
+To generate predictions, you can use the `predict.sh` script. The script takes three arguments:
+- `<model>`: the model to generate predictions for (e.g. `lrlm`, `cpa`, `scgpt`, `scvi`)
+- `<dataset>`: the dataset to generate predictions for
+- `<fold_id>`: the fold id to generate predictions for (only for Replogle)
+
+For tahoe, the `<fold_id>` is not needed.
+
+### Available Prediction Scripts
+
+| Model | Dataset | Command Example |
+|-------|---------|--------|
+| LowRankLinear | Replogle | `sh scripts/predict.sh lrlm replogle 1` |
+| scVI | Tahoe | `sh scripts/predict.sh scvi tahoe` |
+| CPA | Parse | `sh scripts/predict.sh scvi parse split_1` |
